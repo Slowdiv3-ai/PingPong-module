@@ -31,26 +31,31 @@ jobs:
 
       - name: Package Magisk Module
         run: |
-          # Place library in SYSTEM partition (Magisk always mounts this correctly)
+          # 1. Place library in SYSTEM partition (Magisk mounts this perfectly)
           mkdir -p magisk_module/system/lib64/soundfx
           cp effect/libs/arm64-v8a/libpingpong.so magisk_module/system/lib64/soundfx/
           
-          # Create module.prop
+          # 2. Create module.prop
           echo "id=pingpong_dsp" > magisk_module/module.prop
           echo "name=PingPong DSP" >> magisk_module/module.prop
-          echo "version=v1.3" >> magisk_module/module.prop
-          echo "versionCode=4" >> magisk_module/module.prop
+          echo "version=v1.5" >> magisk_module/module.prop
+          echo "versionCode=6" >> magisk_module/module.prop
           echo "author=You" >> magisk_module/module.prop
           echo "description=Global PingPong Audio Effect" >> magisk_module/module.prop
 
-          # Create service.sh using Python to copy file to vendor and fix SELinux
+          # 3. THE MAGIC FIX: Create sepolicy.rule to allow audio HAL to read our library
+          cat <<'EOF' > magisk_module/sepolicy.rule
+          # Allow hal_audio_default to read and execute our library from the system overlay
+          allow hal_audio_default system_file:file { read open execute execute_no_trans map };
+          allow hal_audio_default vendor_file:file { read open execute execute_no_trans map };
+          EOF
+
+          # 4. Create a simplified service.sh to ONLY patch the XML
           python3 -c "
           import os
           script = '''#!/system/bin/sh
           MODDIR=\${0%/*}
           EFFECTS_XML=\"/vendor/etc/audio_effects.xml\"
-          VENDOR_LIB=\"/vendor/lib64/soundfx/libpingpong.so\"
-          SYSTEM_LIB=\"/system/lib64/soundfx/libpingpong.so\"
 
           # Wait for boot to finish
           until [ \"\$(getprop sys.boot_completed)\" = \"1\" ]; do
@@ -61,14 +66,7 @@ jobs:
           # Make vendor writable
           mount -o rw,remount /vendor
 
-          # 1. Copy library to vendor with correct SELinux context
-          if [ -f \"\$SYSTEM_LIB\" ]; then
-              cp \"\$SYSTEM_LIB\" \"\$VENDOR_LIB\"
-              chmod 644 \"\$VENDOR_LIB\"
-              chcon u:object_r:vendor_file:s0 \"\$VENDOR_LIB\"
-          fi
-
-          # 2. Patch XML if not already done
+          # Patch XML if not already done
           if ! grep -q \"libpingpong.so\" \"\$EFFECTS_XML\"; then
               cp \"\$EFFECTS_XML\" /data/local/tmp/audio_effects.xml
               sed 's|<libraries>|<libraries>\\n        <library name=\"pingpong\" path=\"libpingpong.so\"/>|' /data/local/tmp/audio_effects.xml > /data/local/tmp/audio_effects_new.xml
