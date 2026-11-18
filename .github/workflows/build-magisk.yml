@@ -31,27 +31,23 @@ jobs:
 
       - name: Package Magisk Module
         run: |
-          mkdir -p magisk_module/system/lib64/soundfx
-          cp effect/libs/arm64-v8a/libpingpong.so magisk_module/system/lib64/soundfx/
+          # CRITICAL FIX: Place library in vendor partition for correct SELinux context
+          mkdir -p magisk_module/vendor/lib64/soundfx
+          cp effect/libs/arm64-v8a/libpingpong.so magisk_module/vendor/lib64/soundfx/
           
           # Create module.prop
           echo "id=pingpong_dsp" > magisk_module/module.prop
           echo "name=PingPong DSP" >> magisk_module/module.prop
-          echo "version=v1.1" >> magisk_module/module.prop
-          echo "versionCode=2" >> magisk_module/module.prop
+          echo "version=v1.2" >> magisk_module/module.prop
+          echo "versionCode=3" >> magisk_module/module.prop
           echo "author=You" >> magisk_module/module.prop
           echo "description=Global PingPong Audio Effect" >> magisk_module/module.prop
 
-
-                    # Create the boot script to patch the REAL audio_effects.xml
+          # Create the boot script to patch the REAL audio_effects.xml
           cat <<'EOF' > magisk_module/service.sh
 #!/system/bin/sh
 MODDIR=${0%/*}
 EFFECTS_XML="/vendor/etc/audio_effects.xml"
-
-# Log for debugging
-LOG="/sdcard/pingpong_boot.log"
-echo "PingPong boot script started at $(date)" > "$LOG"
 
 # Wait for boot to finish
 until [ "$(getprop sys.boot_completed)" = "1" ]; do
@@ -59,47 +55,28 @@ until [ "$(getprop sys.boot_completed)" = "1" ]; do
 done
 sleep 10
 
-echo "Boot completed, starting patch..." >> "$LOG"
-
 # Make vendor writable
-mount -o rw,remount /vendor 2>> "$LOG"
+mount -o rw,remount /vendor
 
 # Backup original file if not already backed up
 if [ ! -f "$EFFECTS_XML.bak" ]; then
     cp "$EFFECTS_XML" "$EFFECTS_XML.bak"
-    echo "Backup created" >> "$LOG"
 fi
 
 # Check if our effect is already there
 if ! grep -q "libpingpong.so" "$EFFECTS_XML"; then
-    echo "Injecting effect..." >> "$LOG"
-    
-    # Try to inject library definition
-    if grep -q "<libraries>" "$EFFECTS_XML"; then
-        sed -i '/<libraries>/a \    <library name="pingpong" path="libpingpong.so"/>' "$EFFECTS_XML"
-        echo "Library injected" >> "$LOG"
-    else
-        echo "ERROR: <libraries> tag not found!" >> "$LOG"
-    fi
-    
-    # Try to inject effect definition
-    if grep -q "<effects>" "$EFFECTS_XML"; then
-        sed -i '/<effects>/a \    <effect name="pingpong" library="pingpong" uuid="12345678-1234-1234-1234-123456789abc"/>' "$EFFECTS_XML"
-        echo "Effect injected" >> "$LOG"
-    else
-        echo "ERROR: <effects> tag not found!" >> "$LOG"
-    fi
+    # Copy to temp location, edit, then copy back (to avoid sed temp file issues)
+    cp "$EFFECTS_XML" /data/local/tmp/audio_effects.xml
+    sed 's|<libraries>|<libraries>\n        <library name="pingpong" path="libpingpong.so"/>|' /data/local/tmp/audio_effects.xml > /data/local/tmp/audio_effects_new.xml
+    sed 's|<effects>|<effects>\n        <effect name="pingpong" library="pingpong" uuid="12345678-1234-1234-1234-123456789abc"/>|' /data/local/tmp/audio_effects_new.xml > "$EFFECTS_XML"
+    chmod 644 "$EFFECTS_XML"
     
     # Restart the audio server to apply changes
     setprop ctl.restart audioserver
-    echo "Audioserver restarted" >> "$LOG"
-else
-    echo "Effect already present, skipping injection" >> "$LOG"
 fi
 
-# Make vendor read-only again (safety)
-mount -o ro,remount /vendor 2>> "$LOG"
-echo "Script finished at $(date)" >> "$LOG"
+# Make vendor read-only again
+mount -o ro,remount /vendor
 EOF
           chmod 755 magisk_module/service.sh
           sed -i 's/\r$//' magisk_module/service.sh
