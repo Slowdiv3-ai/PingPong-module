@@ -37,23 +37,40 @@ jobs:
           # Create module.prop
           echo "id=pingpong_dsp" > magisk_module/module.prop
           echo "name=PingPong DSP" >> magisk_module/module.prop
-          echo "version=v1.0" >> magisk_module/module.prop
-          echo "versionCode=1" >> magisk_module/module.prop
+          echo "version=v1.1" >> magisk_module/module.prop
+          echo "versionCode=2" >> magisk_module/module.prop
           echo "author=You" >> magisk_module/module.prop
           echo "description=Global PingPong Audio Effect" >> magisk_module/module.prop
 
-          # Create audio_effects.xml snippet
-          mkdir -p magisk_module/system/etc
-          cat <<EOF > magisk_module/system/etc/audio_effects.xml
-          <audio_effects_conf>
-            <libraries>
-              <library name="pingpong" path="libpingpong.so"/>
-            </libraries>
-            <effects>
-              <effect name="pingpong" library="pingpong" uuid="12345678-1234-1234-1234-123456789abc"/>
-            </effects>
-          </audio_effects_conf>
+          # Create the boot script to patch the REAL audio_effects.xml
+          cat <<'EOF' > magisk_module/service.sh
+          #!/system/bin/sh
+          MODDIR=${0%/*}
+          EFFECTS_XML="/vendor/etc/audio_effects.xml"
+
+          # Wait for boot to finish
+          until [ "$(getprop sys.boot_completed)" = "1" ]; do
+              sleep 1
+          done
+          sleep 5
+
+          # Backup original file if not already backed up
+          if [ ! -f "$EFFECTS_XML.bak" ]; then
+              cp "$EFFECTS_XML" "$EFFECTS_XML.bak"
+          fi
+
+          # Inject our effect if it's not already there
+          if ! grep -q "libpingpong.so" "$EFFECTS_XML"; then
+              # Inject library definition
+              sed -i '/<libraries>/a \    <library name="pingpong" path="libpingpong.so"/>' "$EFFECTS_XML"
+              # Inject effect definition
+              sed -i '/<effects>/a \    <effect name="pingpong" library="pingpong" uuid="12345678-1234-1234-1234-123456789abc"/>' "$EFFECTS_XML"
+              
+              # Restart the audio server to apply changes
+              setprop ctl.restart audioserver
+          fi
           EOF
+          chmod +x magisk_module/service.sh
 
           cd magisk_module
           zip -r ../PingPong-Magisk-Module.zip .
