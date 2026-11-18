@@ -20,7 +20,7 @@ typedef struct effect_uuid_s {
 typedef struct effect_descriptor_s {
     effect_uuid_t type;
     effect_uuid_t uuid;
-    uint16_t apiVersion;
+    uint16_t apiVersion; // Must be 0x0300 for Android 13+
     uint32_t flags;
     uint16_t cpuLoad;
     uint16_t memoryUsage;
@@ -48,20 +48,16 @@ typedef void* effect_handle_t;
 
 #define EFFECT_CMD_ENABLE 0
 #define EFFECT_CMD_DISABLE 1
-#define EFFECT_CMD_SET_PARAM 2
-#define EFFECT_CMD_GET_PARAM 3
-#define EFFECT_CMD_SET_CONFIG 4
-#define EFFECT_CMD_RESET 5
 
 #define EFFECT_FLAG_TYPE_PRE_PROC 0x00000001
 #define EFFECT_FLAG_TYPE_POST_PROC 0x00000002
 #define EFFECT_FLAG_DEVICE_IND 0x00000004
-#define EFFECT_FLAG_HW_ACC_TUNNEL 0x00000008
 
-#define EFFECT_LIBRARY_API_VERSION 1
+// CRITICAL: Android 13+ requires API version 3.0
+#define EFFECT_LIBRARY_API_VERSION 0x0300
 
 typedef struct effect_library_s {
-    uint32_t tag;
+    uint32_t tag; // Must be 0x0300
     const char* name;
     const char* implementor;
     int32_t (*get_descriptor)(const effect_uuid_t *uuid, effect_descriptor_t *pDescriptor);
