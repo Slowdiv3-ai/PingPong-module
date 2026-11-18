@@ -1,0 +1,64 @@
+name: Build PingPong Magisk Module
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-effect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Download Android NDK
+        run: |
+          wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip android-ndk-r25c-linux.zip
+          echo "NDK_HOME=$(pwd)/android-ndk-r25c" >> $GITHUB_ENV
+
+      - name: Compile C++ Effect
+        run: |
+          cd effect
+          $NDK_HOME/ndk-build NDK_PROJECT_PATH=. APP_BUILD_SCRIPT=Android.mk APP_PLATFORM=android-33 APP_ABI=arm64-v8a
+
+      - name: Package Magisk Module
+        run: |
+          mkdir -p magisk_module/system/lib64/soundfx
+          cp effect/libs/arm64-v8a/libpingpong.so magisk_module/system/lib64/soundfx/
+          
+          # Create module.prop
+          echo "id=pingpong_dsp" > magisk_module/module.prop
+          echo "name=PingPong DSP" >> magisk_module/module.prop
+          echo "version=v1.0" >> magisk_module/module.prop
+          echo "versionCode=1" >> magisk_module/module.prop
+          echo "author=You" >> magisk_module/module.prop
+          echo "description=Global PingPong Audio Effect" >> magisk_module/module.prop
+
+          # Create audio_effects.xml snippet
+          mkdir -p magisk_module/system/etc
+          cat <<EOF > magisk_module/system/etc/audio_effects.xml
+          <audio_effects_conf>
+            <libraries>
+              <library name="pingpong" path="libpingpong.so"/>
+            </libraries>
+            <effects>
+              <effect name="pingpong" library="pingpong" uuid="12345678-1234-1234-1234-123456789abc"/>
+            </effects>
+          </audio_effects_conf>
+          EOF
+
+          cd magisk_module
+          zip -r ../PingPong-Magisk-Module.zip .
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: PingPong-Magisk-Module
+          path: PingPong-Magisk-Module.zip
