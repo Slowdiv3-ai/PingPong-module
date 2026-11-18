@@ -31,7 +31,7 @@ jobs:
 
       - name: Package Magisk Module
         run: |
-          # CRITICAL FIX: Place library in vendor partition for correct SELinux context
+          # Place library in vendor partition for correct SELinux context
           mkdir -p magisk_module/vendor/lib64/soundfx
           cp effect/libs/arm64-v8a/libpingpong.so magisk_module/vendor/lib64/soundfx/
           
@@ -43,43 +43,45 @@ jobs:
           echo "author=You" >> magisk_module/module.prop
           echo "description=Global PingPong Audio Effect" >> magisk_module/module.prop
 
-          # Create the boot script to patch the REAL audio_effects.xml
-          cat <<'EOF' > magisk_module/service.sh
-#!/system/bin/sh
-MODDIR=${0%/*}
-EFFECTS_XML="/vendor/etc/audio_effects.xml"
+          # Create service.sh using Python (safer for YAML)
+          python3 -c "
+          script = '''#!/system/bin/sh
+          MODDIR=\${0%/*}
+          EFFECTS_XML=\"/vendor/etc/audio_effects.xml\"
 
-# Wait for boot to finish
-until [ "$(getprop sys.boot_completed)" = "1" ]; do
-    sleep 1
-done
-sleep 10
+          # Wait for boot to finish
+          until [ \"\$(getprop sys.boot_completed)\" = \"1\" ]; do
+              sleep 1
+          done
+          sleep 10
 
-# Make vendor writable
-mount -o rw,remount /vendor
+          # Make vendor writable
+          mount -o rw,remount /vendor
 
-# Backup original file if not already backed up
-if [ ! -f "$EFFECTS_XML.bak" ]; then
-    cp "$EFFECTS_XML" "$EFFECTS_XML.bak"
-fi
+          # Backup original file if not already backed up
+          if [ ! -f \"\$EFFECTS_XML.bak\" ]; then
+              cp \"\$EFFECTS_XML\" \"\$EFFECTS_XML.bak\"
+          fi
 
-# Check if our effect is already there
-if ! grep -q "libpingpong.so" "$EFFECTS_XML"; then
-    # Copy to temp location, edit, then copy back (to avoid sed temp file issues)
-    cp "$EFFECTS_XML" /data/local/tmp/audio_effects.xml
-    sed 's|<libraries>|<libraries>\n        <library name="pingpong" path="libpingpong.so"/>|' /data/local/tmp/audio_effects.xml > /data/local/tmp/audio_effects_new.xml
-    sed 's|<effects>|<effects>\n        <effect name="pingpong" library="pingpong" uuid="12345678-1234-1234-1234-123456789abc"/>|' /data/local/tmp/audio_effects_new.xml > "$EFFECTS_XML"
-    chmod 644 "$EFFECTS_XML"
-    
-    # Restart the audio server to apply changes
-    setprop ctl.restart audioserver
-fi
+          # Check if our effect is already there
+          if ! grep -q \"libpingpong.so\" \"\$EFFECTS_XML\"; then
+              # Copy to temp location, edit, then copy back
+              cp \"\$EFFECTS_XML\" /data/local/tmp/audio_effects.xml
+              sed 's|<libraries>|<libraries>\\n        <library name=\"pingpong\" path=\"libpingpong.so\"/>|' /data/local/tmp/audio_effects.xml > /data/local/tmp/audio_effects_new.xml
+              sed 's|<effects>|<effects>\\n        <effect name=\"pingpong\" library=\"pingpong\" uuid=\"12345678-1234-1234-1234-123456789abc\"/>|' /data/local/tmp/audio_effects_new.xml > \"\$EFFECTS_XML\"
+              chmod 644 \"\$EFFECTS_XML\"
+              
+              # Restart the audio server
+              setprop ctl.restart audioserver
+          fi
 
-# Make vendor read-only again
-mount -o ro,remount /vendor
-EOF
+          # Make vendor read-only again
+          mount -o ro,remount /vendor
+          '''
+          with open('magisk_module/service.sh', 'w') as f:
+              f.write(script)
+          "
           chmod 755 magisk_module/service.sh
-          sed -i 's/\r$//' magisk_module/service.sh
 
           cd magisk_module
           zip -r ../PingPong-Magisk-Module.zip .
