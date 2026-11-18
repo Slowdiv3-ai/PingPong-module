@@ -31,23 +31,26 @@ jobs:
 
       - name: Package Magisk Module
         run: |
-          # Place library in vendor partition for correct SELinux context
-          mkdir -p magisk_module/vendor/lib64/soundfx
-          cp effect/libs/arm64-v8a/libpingpong.so magisk_module/vendor/lib64/soundfx/
+          # Place library in SYSTEM partition (Magisk always mounts this correctly)
+          mkdir -p magisk_module/system/lib64/soundfx
+          cp effect/libs/arm64-v8a/libpingpong.so magisk_module/system/lib64/soundfx/
           
           # Create module.prop
           echo "id=pingpong_dsp" > magisk_module/module.prop
           echo "name=PingPong DSP" >> magisk_module/module.prop
-          echo "version=v1.2" >> magisk_module/module.prop
-          echo "versionCode=3" >> magisk_module/module.prop
+          echo "version=v1.3" >> magisk_module/module.prop
+          echo "versionCode=4" >> magisk_module/module.prop
           echo "author=You" >> magisk_module/module.prop
           echo "description=Global PingPong Audio Effect" >> magisk_module/module.prop
 
-          # Create service.sh using Python (safer for YAML)
+          # Create service.sh using Python to copy file to vendor and fix SELinux
           python3 -c "
+          import os
           script = '''#!/system/bin/sh
           MODDIR=\${0%/*}
           EFFECTS_XML=\"/vendor/etc/audio_effects.xml\"
+          VENDOR_LIB=\"/vendor/lib64/soundfx/libpingpong.so\"
+          SYSTEM_LIB=\"/system/lib64/soundfx/libpingpong.so\"
 
           # Wait for boot to finish
           until [ \"\$(getprop sys.boot_completed)\" = \"1\" ]; do
@@ -58,20 +61,19 @@ jobs:
           # Make vendor writable
           mount -o rw,remount /vendor
 
-          # Backup original file if not already backed up
-          if [ ! -f \"\$EFFECTS_XML.bak\" ]; then
-              cp \"\$EFFECTS_XML\" \"\$EFFECTS_XML.bak\"
+          # 1. Copy library to vendor with correct SELinux context
+          if [ -f \"\$SYSTEM_LIB\" ]; then
+              cp \"\$SYSTEM_LIB\" \"\$VENDOR_LIB\"
+              chmod 644 \"\$VENDOR_LIB\"
+              chcon u:object_r:vendor_file:s0 \"\$VENDOR_LIB\"
           fi
 
-          # Check if our effect is already there
+          # 2. Patch XML if not already done
           if ! grep -q \"libpingpong.so\" \"\$EFFECTS_XML\"; then
-              # Copy to temp location, edit, then copy back
               cp \"\$EFFECTS_XML\" /data/local/tmp/audio_effects.xml
               sed 's|<libraries>|<libraries>\\n        <library name=\"pingpong\" path=\"libpingpong.so\"/>|' /data/local/tmp/audio_effects.xml > /data/local/tmp/audio_effects_new.xml
               sed 's|<effects>|<effects>\\n        <effect name=\"pingpong\" library=\"pingpong\" uuid=\"12345678-1234-1234-1234-123456789abc\"/>|' /data/local/tmp/audio_effects_new.xml > \"\$EFFECTS_XML\"
               chmod 644 \"\$EFFECTS_XML\"
-              
-              # Restart the audio server
               setprop ctl.restart audioserver
           fi
 
@@ -80,8 +82,8 @@ jobs:
           '''
           with open('magisk_module/service.sh', 'w') as f:
               f.write(script)
+          os.chmod('magisk_module/service.sh', 0o755)
           "
-          chmod 755 magisk_module/service.sh
 
           cd magisk_module
           zip -r ../PingPong-Magisk-Module.zip .
