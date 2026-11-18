@@ -38,50 +38,53 @@ jobs:
           # 2. Create module.prop
           echo "id=pingpong_dsp" > magisk_module/module.prop
           echo "name=PingPong DSP" >> magisk_module/module.prop
-          echo "version=v1.5" >> magisk_module/module.prop
-          echo "versionCode=6" >> magisk_module/module.prop
+          echo "version=v1.8" >> magisk_module/module.prop
+          echo "versionCode=9" >> magisk_module/module.prop
           echo "author=You" >> magisk_module/module.prop
           echo "description=Global PingPong Audio Effect" >> magisk_module/module.prop
 
-          # 3. THE MAGIC FIX: Create sepolicy.rule to allow audio HAL to read our library
-          cat <<'EOF' > magisk_module/sepolicy.rule
-          # Allow hal_audio_default to read and execute our library from the system overlay
-          allow hal_audio_default system_file:file { read open execute execute_no_trans map };
-          allow hal_audio_default vendor_file:file { read open execute execute_no_trans map };
-          EOF
-
-          # 4. Create a simplified service.sh to ONLY patch the XML
+          # 3. THE MAGIC FIX: Create post-fs-data.sh (runs EARLY, before audioserver starts)
           python3 -c "
           import os
           script = '''#!/system/bin/sh
           MODDIR=\${0%/*}
+          VENDOR_LIB=\"/vendor/lib64/soundfx/libpingpong.so\"
           EFFECTS_XML=\"/vendor/etc/audio_effects.xml\"
 
-          # Wait for boot to finish
-          until [ \"\$(getprop sys.boot_completed)\" = \"1\" ]; do
-              sleep 1
-          done
-          sleep 10
+          # Wait briefly for vendor partition to be fully mounted
+          sleep 2
 
           # Make vendor writable
           mount -o rw,remount /vendor
 
-          # Patch XML if not already done
+          # 1. Copy library to vendor with correct SELinux context
+          if [ -f \"\$MODDIR/system/lib64/soundfx/libpingpong.so\" ]; then
+              cp \"\$MODDIR/system/lib64/soundfx/libpingpong.so\" \"\$VENDOR_LIB\"
+              chmod 644 \"\$VENDOR_LIB\"
+              chcon u:object_r:vendor_file:s0 \"\$VENDOR_LIB\"
+          fi
+
+          # 2. Patch XML if not already done
           if ! grep -q \"libpingpong.so\" \"\$EFFECTS_XML\"; then
               cp \"\$EFFECTS_XML\" /data/local/tmp/audio_effects.xml
               sed 's|<libraries>|<libraries>\\n        <library name=\"pingpong\" path=\"libpingpong.so\"/>|' /data/local/tmp/audio_effects.xml > /data/local/tmp/audio_effects_new.xml
               sed 's|<effects>|<effects>\\n        <effect name=\"pingpong\" library=\"pingpong\" uuid=\"12345678-1234-1234-1234-123456789abc\"/>|' /data/local/tmp/audio_effects_new.xml > \"\$EFFECTS_XML\"
               chmod 644 \"\$EFFECTS_XML\"
-              setprop ctl.restart audioserver
           fi
 
           # Make vendor read-only again
           mount -o ro,remount /vendor
           '''
-          with open('magisk_module/service.sh', 'w') as f:
+          with open('magisk_module/post-fs-data.sh', 'w') as f:
               f.write(script)
-          os.chmod('magisk_module/service.sh', 0o755)
+          os.chmod('magisk_module/post-fs-data.sh', 0o755)
           "
+
+          # 4. Create sepolicy.rule just in case
+          cat <<'EOF' > magisk_module/sepolicy.rule
+          allow hal_audio_default system_file:file { read open execute execute_no_trans map };
+          allow hal_audio_default vendor_file:file { read open execute execute_no_trans map };
+          EOF
 
           cd magisk_module
           zip -r ../PingPong-Magisk-Module.zip .
