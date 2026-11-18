@@ -38,26 +38,23 @@ jobs:
           # 2. Create module.prop
           echo "id=pingpong_dsp" > magisk_module/module.prop
           echo "name=PingPong DSP" >> magisk_module/module.prop
-          echo "version=v1.9" >> magisk_module/module.prop
-          echo "versionCode=10" >> magisk_module/module.prop
+          echo "version=v2.0" >> magisk_module/module.prop
+          echo "versionCode=11" >> magisk_module/module.prop
           echo "author=You" >> magisk_module/module.prop
           echo "description=Global PingPong Audio Effect" >> magisk_module/module.prop
 
-          # 3. THE MAGIC TRICK: Change SELinux label BEFORE Magisk mounts it
-          python3 -c "
-          import os
-          script = '''#!/system/bin/sh
-          MODDIR=\${0%/*}
-          # Change the context of the file in the module directory.
-          # When Magisk mounts this to /system, it will keep this 'vendor' label!
-          chcon u:object_r:vendor_file:s0 \"\$MODDIR/system/lib64/soundfx/libpingpong.so\"
-          '''
-          with open('magisk_module/post-fs-data.sh', 'w') as f:
-              f.write(script)
-          os.chmod('magisk_module/post-fs-data.sh', 0o755)
-          "
+          # 3. THE MAGIC FIX: Create file_contexts to label the file as vendor_file during mount
+          cat <<'EOF' > magisk_module/file_contexts
+          /system/lib64/soundfx/libpingpong.so u:object_r:vendor_file:s0
+          EOF
 
-          # 4. service.sh to patch the XML (This was working in your last test!)
+          # 4. Sepolicy rule to allow the audio HAL to read it (belt and suspenders)
+          cat <<'EOF' > magisk_module/sepolicy.rule
+          allow hal_audio_default vendor_file:file { read open execute execute_no_trans map };
+          allow hal_audio_default system_file:file { read open execute execute_no_trans map };
+          EOF
+
+          # 5. service.sh to patch the XML (This works, keep it)
           python3 -c "
           import os
           script = '''#!/system/bin/sh
@@ -85,12 +82,6 @@ jobs:
               f.write(script)
           os.chmod('magisk_module/service.sh', 0o755)
           "
-
-          # 5. Sepolicy rule just in case
-          cat <<'EOF' > magisk_module/sepolicy.rule
-          allow hal_audio_default system_file:file { read open execute execute_no_trans map };
-          allow hal_audio_default vendor_file:file { read open execute execute_no_trans map };
-          EOF
 
           cd magisk_module
           zip -r ../PingPong-Magisk-Module.zip .
